@@ -347,17 +347,47 @@ def _fuzzy_match(target, options):
     return ""
 
 
+def _set_widgets_from_ui():
+    """从user_info设置所有表单widget的session_state值（用于导入/自动填表后）"""
+    ui = st.session_state.user_info
+    st.session_state["f_name"] = ui.get("child_name", "")
+    st.session_state["f_gender"] = ui.get("gender", "")
+    st.session_state["f_phone"] = ui.get("phone", "")
+    st.session_state["f_ps"] = ui.get("primary_school", "")
+    st.session_state["f_hh"] = ui.get("household", "昆明主城区")
+    st.session_state["f_ts1"] = ui.get("target_school_1", "")
+    st.session_state["f_ts2"] = ui.get("target_school_2", "")
+    st.session_state["f_ts3"] = ui.get("target_school_3", "")
+    st.session_state["f_hl"] = ui.get("honor_level", "无")
+    st.session_state["f_hd"] = ui.get("honor_detail", "")
+    st.session_state["f_comp"] = ui.get("competition_detail", "")
+    st.session_state["f_sl"] = ui.get("sports_level", "无")
+    st.session_state["f_sd"] = ui.get("sports_detail", "")
+    st.session_state["f_alvl"] = ui.get("art_level", "无")
+    st.session_state["f_ad"] = ui.get("art_detail", "")
+    st.session_state["f_al"] = ui.get("academic_level", "")
+    st.session_state["f_gr"] = ui.get("grade_rank", "")
+    st.session_state["f_twins"] = ui.get("is_twins", False)
+    st.session_state["f_hh2"] = ui.get("household", "昆明主城区")
+    st.session_state["f_reloc"] = ui.get("relocation", "")
+    st.session_state["f_rt"] = ui.get("relocation_time", "暂无搬迁")
+    st.session_state["f_rdate"] = ui.get("_reloc_date", "")
+    st.session_state["f_rhdate"] = ui.get("_reloc_hukou_date", "")
+    st.session_state["f_rarea"] = ui.get("_reloc_area", "")
+    st.session_state["f_rcomm"] = ui.get("_reloc_community", "")
+    st.session_state["f_extra"] = ui.get("extra_info", "")
+    st.session_state["f_ptags"] = list(ui.get("personality_tags", []))
+    st.session_state["f_itags"] = list(ui.get("interest_tags", []))
+    st.session_state["f_pcustom"] = ui.get("personality_custom", "")
+    st.session_state["f_icustom"] = ui.get("interest_custom", "")
+    st.session_state["f_phase"] = ui.get("phase", "")
+
+
 def _sync_widget_keys():
     """清除所有表单widget缓存，强制widget从user_info重新读取value=参数"""
-    widget_keys = [
-        "f_name","f_gender","f_phone","f_ps","f_hh","f_ts1","f_ts2","f_ts3",
-        "f_hl","f_hd","f_comp","f_sl","f_sd","f_alvl","f_ad",
-        "f_al","f_twins","f_hh2","f_reloc","f_rt","f_extra",
-        "f_ptags","f_itags","f_pcustom","f_icustom",
-        "f_gr","f_rarea","f_rcomm","f_rdate","f_rhdate",
-        "f_phase","f_resume_v2","f_import",
-    ]
-    for k in widget_keys:
+    _set_widgets_from_ui()  # 先设置widget值
+    # 额外清理不在_set_widgets_from_ui中的残留key
+    for k in ["f_resume_v2", "f_import_top", "f_import"]:
         st.session_state.pop(k, None)
 
 
@@ -489,6 +519,32 @@ if not st.session_state.form_submitted:
     </p>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── 导入已保存信息（页面顶部）──
+    with st.container():
+        st.markdown('<div class="form-card" style="border-left: 4px solid #4caf50;">', unsafe_allow_html=True)
+        import_file = st.file_uploader(
+            "📥 导入之前保存的学生信息 (.json)", type=["json"], key="f_import_top"
+        )
+        if import_file is not None:
+            try:
+                imported = json.loads(import_file.getvalue())
+                for k, v in imported.items():
+                    if k in ui and not k.startswith("_"):
+                        ui[k] = v
+                _set_widgets_from_ui()
+                st.success("✅ 已导入！表单已自动填充。")
+                st.rerun()
+            except Exception as e:
+                st.error(f"导入失败：{e}")
+        st.download_button(
+            "📤 导出当前信息 (.json)",
+            data=json.dumps({k:v for k,v in ui.items() if not k.startswith("_") and k!="resume_text"},
+                           ensure_ascii=False, indent=2),
+            file_name=f"学生信息_{ui.get('child_name','未命名')}.json",
+            mime="application/json",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ── 简历上传（最上方，上传即自动解析填表）──
     with st.container():
@@ -838,40 +894,6 @@ if not st.session_state.form_submitted:
 
     # --- 提交按钮 ---
     st.markdown('<div style="max-width:900px; margin:0 auto;">', unsafe_allow_html=True)
-
-    # 学生信息保存/导入
-    with st.expander("💾 保存/导入已填写信息", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            # 导出为JSON
-            export_data = {k: v for k, v in ui.items()
-                          if not k.startswith("_") and k != "resume_text"}
-            st.download_button(
-                "📤 导出学生信息 (.json)",
-                data=json.dumps(export_data, ensure_ascii=False, indent=2),
-                file_name=f"学生信息_{ui.get('child_name','未命名')}.json",
-                mime="application/json",
-                use_container_width=True,
-            )
-        with c2:
-            import_file = st.file_uploader(
-                "📥 导入之前保存的信息", type=["json"],
-                key="f_import", label_visibility="collapsed"
-            )
-            if import_file is not None:
-                try:
-                    imported = json.loads(import_file.getvalue())
-                    for k, v in imported.items():
-                        if k in ui and not k.startswith("_"):
-                            ui[k] = v
-                    # 清除widget缓存以便表单显示导入的值
-                    for wk in list(st.session_state.keys()):
-                        if wk.startswith("f_"):
-                            st.session_state.pop(wk, None)
-                    st.success("✅ 信息已导入！请检查并更新后提交。")
-                    st.rerun()
-                except Exception as imp_err:
-                    st.error(f"导入失败：{imp_err}")
 
     st.button("🚀 开始规划", on_click=submit_form, use_container_width=True)
 
