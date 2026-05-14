@@ -310,6 +310,42 @@ def _fuzzy_match(target, options):
     return ""
 
 
+def _sync_widget_keys():
+    """将user_info的值同步到所有表单widget的session_state key"""
+    ui = st.session_state.user_info
+    # 所有表单widget的key映射
+    key_map = {
+        "f_name": ui.get("child_name", ""),
+        "f_gender": ui.get("gender", ""),
+        "f_phone": ui.get("phone", ""),
+        "f_ps": ui.get("primary_school", ""),
+        "f_hh": ui.get("household", ""),
+        "f_ts1": ui.get("target_school_1", ""),
+        "f_ts2": ui.get("target_school_2", ""),
+        "f_ts3": ui.get("target_school_3", ""),
+        "f_hl": ui.get("honor_level", "无"),
+        "f_hd": ui.get("honor_detail", ""),
+        "f_comp": ui.get("competition_detail", ""),
+        "f_sl": ui.get("sports_level", "无"),
+        "f_sd": ui.get("sports_detail", ""),
+        "f_alvl": ui.get("art_level", "无"),
+        "f_ad": ui.get("art_detail", ""),
+        "f_al": ui.get("academic_level", ""),
+        "f_twins": ui.get("is_twins", False),
+        "f_hh2": ui.get("household", ""),
+        "f_reloc": ui.get("relocation", ""),
+        "f_rt": ui.get("relocation_time", ""),
+        "f_extra": ui.get("extra_info", ""),
+        "f_pcustom": ui.get("personality_custom", ""),
+        "f_icustom": ui.get("interest_custom", ""),
+    }
+    for k, v in key_map.items():
+        st.session_state[k] = v
+    # multiselect 需要特殊处理（存储为列表）
+    st.session_state["f_ptags"] = list(ui.get("personality_tags", []))
+    st.session_state["f_itags"] = list(ui.get("interest_tags", []))
+
+
 def auto_fill_from_resume(parsed):
     """将AI解析结果填入表单，自动匹配下拉框格式"""
     ui = st.session_state.user_info
@@ -347,6 +383,8 @@ def auto_fill_from_resume(parsed):
     if parsed.get("other_info"):
         old = ui.get("extra_info", "")
         ui["extra_info"] = (old + "\n[简历解析] " + parsed["other_info"]).strip()
+    # 关键：将user_info同步到widget key，Streamlit标准动态更新模式
+    _sync_widget_keys()
 
 
 def reset_all():
@@ -489,11 +527,8 @@ if not st.session_state.form_submitted:
                             parsed = parse_resume_with_ai(ui["resume_text"])
                             if parsed:
                                 auto_fill_from_resume(parsed)
+                                # _sync_widget_keys 已在auto_fill中调用
                                 st.session_state["_resume_parsed"] = True
-                                # 清除widget缓存，强制重读session_state值
-                                for wk in list(st.session_state.keys()):
-                                    if wk.startswith("f_") and wk != "f_resume_v2":
-                                        del st.session_state[wk]
                                 st.rerun()
                             else:
                                 st.warning("AI解析未成功，请手动填写下方表单。")
