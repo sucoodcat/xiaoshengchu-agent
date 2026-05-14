@@ -283,27 +283,28 @@ def parse_resume_with_ai(resume_text):
         return None
     try:
         client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-        prompt = f"""请从以下学生简历文本中提取信息，严格返回JSON格式（只返回JSON，不要其他文字）：
+        prompt = f"""请从以下学生简历中逐项仔细提取信息。严格返回JSON格式（只返回JSON，不要其他文字）。务必仔细阅读全文，不要遗漏就读学校、特长、爱好等信息。
 
 {{
-  "child_name": "姓名",
+  "child_name": "姓名（必填）",
   "gender": "男或女",
-  "primary_school": "就读小学全称",
+  "primary_school": "就读小学全称，请仔细查找学校名称（必填）",
   "academic_level": "优秀/良好/中等/未提及",
+  "grade_rank": "年级排名，如年级前15名、前10%等",
   "honor_level": "省级/市级/区级/校级/无",
-  "honor_detail": "三好学生等荣誉具体描述",
-  "competition_detail": "学科竞赛获奖详情",
-  "sports_level": "国家级/省级/市级/校级/无",
-  "sports_detail": "体育特长项目与成绩",
-  "art_level": "国家级/省级/市级/校级/无",
-  "art_detail": "艺术特长项目与成绩",
-  "personality_tags": ["标签1","标签2"],
-  "interest_tags": ["兴趣1","兴趣2"],
-  "other_info": "其他值得注意的信息"
+  "honor_detail": "三好学生、优秀学生干部等荣誉的具体全称及年份",
+  "competition_detail": "学科竞赛获奖全称及级别",
+  "sports_level": "国家级/省级/市级/区级/校级/无（无体育特长填无）",
+  "sports_detail": "体育特长项目全称及成绩/级别，如篮球校队主力",
+  "art_level": "国家级/省级/市级/区级/校级/无（无艺术特长填无）",
+  "art_detail": "艺术特长项目全称及级别，如钢琴八级",
+  "personality_tags": ["从以下选：开朗外向/安静内向/沉稳细致/活泼好动/自律自觉/需要督促/好奇心强/有主见，可为空数组"],
+  "interest_tags": ["从以下选：热爱运动/喜欢读书/擅长主持演讲/喜欢科学实验/喜欢编程计算机/喜欢音乐/喜欢绘画美术/喜欢写作/擅长手工制作/喜欢小动物自然，可为空数组"],
+  "other_info": "其他值得注意的信息，如家庭住址、户口所在地等"
 }}
 
 简历文本：
-{resume_text[:3000]}"""
+{resume_text[:4000]}"""
         resp = client.chat.completions.create(
             model=DEFAULT_MODEL, messages=[{"role":"user","content":prompt}],
             max_tokens=1000, temperature=0.1
@@ -354,7 +355,7 @@ def _sync_widget_keys():
         "f_al","f_twins","f_hh2","f_reloc","f_rt","f_extra",
         "f_ptags","f_itags","f_pcustom","f_icustom",
         "f_gr","f_rarea","f_rcomm","f_rdate","f_rhdate",
-        "f_phase",
+        "f_phase","f_resume_v2","f_import",
     ]
     for k in widget_keys:
         st.session_state.pop(k, None)
@@ -863,10 +864,14 @@ if not st.session_state.form_submitted:
                     for k, v in imported.items():
                         if k in ui and not k.startswith("_"):
                             ui[k] = v
+                    # 清除widget缓存以便表单显示导入的值
+                    for wk in list(st.session_state.keys()):
+                        if wk.startswith("f_"):
+                            st.session_state.pop(wk, None)
                     st.success("✅ 信息已导入！请检查并更新后提交。")
                     st.rerun()
-                except:
-                    st.error("导入失败，请确认文件格式正确。")
+                except Exception as imp_err:
+                    st.error(f"导入失败：{imp_err}")
 
     st.button("🚀 开始规划", on_click=submit_form, use_container_width=True)
 
