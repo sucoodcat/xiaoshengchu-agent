@@ -253,14 +253,10 @@ if "is_generating" not in st.session_state:
     st.session_state.is_generating = False
 if "_last_resume_key" not in st.session_state:
     st.session_state["_last_resume_key"] = ""
+if "_last_resume_key_v2" not in st.session_state:
+    st.session_state["_last_resume_key_v2"] = ""
 if "_resume_parsed" not in st.session_state:
     st.session_state["_resume_parsed"] = False
-if "_parse_error" not in st.session_state:
-    st.session_state["_parse_error"] = ""
-if "_pending_resume_text" not in st.session_state:
-    st.session_state["_pending_resume_text"] = ""
-if "_do_parse" not in st.session_state:
-    st.session_state["_do_parse"] = False
 
 
 def parse_resume_with_ai(resume_text):
@@ -358,8 +354,8 @@ def reset_all():
     st.session_state.user_info = dict(default_user_info)
     st.session_state.form_submitted = False
     st.session_state["_last_resume_key"] = ""
+    st.session_state["_last_resume_key_v2"] = ""
     st.session_state["_resume_parsed"] = False
-    st.session_state["_parse_error"] = ""
     st.rerun()
 
 
@@ -441,103 +437,83 @@ if not st.session_state.form_submitted:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 简历上传（放在最上面，上传后可智能填表）──
+    # ── 简历上传（最上方，上传即自动解析填表）──
     with st.container():
         st.markdown('<div class="form-card" style="border-left: 4px solid #f9ab00;">', unsafe_allow_html=True)
-        st.markdown('<p class="form-section-title">📄 学生简历上传（推荐优先上传，可自动填表）</p>', unsafe_allow_html=True)
-        st.caption("支持 PDF、Word(.docx)、图片(.png/.jpg)。上传后点击「智能解析填表」自动填充下方信息。⚠️ 不支持旧版.doc格式，请转为.docx后上传。")
+        st.markdown('<p class="form-section-title">📄 学生简历上传（强烈推荐！上传即自动填表）</p>', unsafe_allow_html=True)
+        st.caption("上传PDF或Word(.docx)简历 → 系统自动提取文本 → AI识别信息 → 自动填充下方所有字段。支持图片但无法自动提取文字。")
 
+        # Step A: 文件上传widget（用独立key避免缓存冲突）
         uploaded_file = st.file_uploader(
-            "选择简历文件", type=["pdf", "docx", "png", "jpg", "jpeg"],
-            key="f_resume",
-            help="可拖拽文件或点击选择。手机端可从相册或文件管理中选择。"
+            "选择简历文件（PDF或Word .docx）",
+            type=["pdf", "docx", "png", "jpg", "jpeg"],
+            key="f_resume_v2",
+            help="可拖拽文件或点击选择。推荐用PDF或.docx格式。"
         )
-        if uploaded_file is not None:
-            # 检查是否是新文件（避免重复解析）
+
+        # Step B: 新文件上传 → 提取文本 → 自动触发解析
+        if uploaded_file is not None and not st.session_state.get("_resume_parsed"):
             file_key = f"{uploaded_file.name}_{uploaded_file.size}"
-            if st.session_state.get("_last_resume_key") != file_key:
+            if st.session_state.get("_last_resume_key_v2") != file_key:
+                # 提取文本
                 try:
                     file_type = uploaded_file.name.split(".")[-1].lower()
                     resume_text = ""
+                    file_bytes = uploaded_file.getvalue()
 
                     if file_type == "pdf":
-                        pdf_reader = PdfReader(io.BytesIO(uploaded_file.getvalue()))
-                        for page in pdf_reader.pages:
-                            text = page.extract_text()
-                            if text:
-                                resume_text += text + "\n"
+                        reader = PdfReader(io.BytesIO(file_bytes))
+                        for page in reader.pages:
+                            t = page.extract_text()
+                            if t: resume_text += t + "\n"
 
                     elif file_type == "docx":
-                        doc = Document(io.BytesIO(uploaded_file.getvalue()))
+                        doc = Document(io.BytesIO(file_bytes))
                         for para in doc.paragraphs:
                             if para.text.strip():
                                 resume_text += para.text + "\n"
                         for table in doc.tables:
                             for row in table.rows:
-                                row_text = " | ".join(cell.text for cell in row.cells)
-                                if row_text.strip():
-                                    resume_text += row_text + "\n"
+                                rt = " | ".join(c.text for c in row.cells)
+                                if rt.strip(): resume_text += rt + "\n"
 
                     elif file_type in ("png", "jpg", "jpeg"):
-                        resume_text = (
-                            "[图片简历已上传。图片格式无法自动提取文字，"
-                            "请手动填写下方表单或上传PDF/Word版本。]"
-                        )
+                        resume_text = "[IMG]"
 
                     ui["resume_text"] = resume_text.strip()
-                    st.session_state["_last_resume_key"] = file_key
+                    st.session_state["_last_resume_key_v2"] = file_key
 
-                    if ui["resume_text"] and file_type not in ("png", "jpg", "jpeg"):
-                        st.success(f"✅ 文件解析成功，共提取约 {len(ui['resume_text'])} 字")
+                    # 自动触发解析（非图片文件）
+                    if ui["resume_text"] and not ui["resume_text"].startswith("[IMG]"):
+                        with st.spinner("🤖 AI正在分析简历并自动填充表单..."):
+                            parsed = parse_resume_with_ai(ui["resume_text"])
+                            if parsed:
+                                auto_fill_from_resume(parsed)
+                                st.session_state["_resume_parsed"] = True
+                                # 清除widget缓存，强制重读session_state值
+                                for wk in list(st.session_state.keys()):
+                                    if wk.startswith("f_") and wk != "f_resume_v2":
+                                        del st.session_state[wk]
+                                st.rerun()
+                            else:
+                                st.warning("AI解析未成功，请手动填写下方表单。")
+
                 except Exception as e:
-                    st.warning(f"文件解析异常：{e}")
+                    st.warning(f"文件处理异常：{e}。请手动填写表单。")
 
-            # 显示解析内容和智能填表按钮
-            if ui.get("resume_text") and "[图片" not in ui["resume_text"]:
-                with st.expander("📋 查看简历解析内容", expanded=False):
-                    st.text(ui["resume_text"][:2000])
-
-                # 显示解析状态
-                if st.session_state.get("_resume_parsed"):
-                    st.success("✅ 表单已自动填充！请逐项检查，修改不准确处后点击「开始规划」。")
-
-                # 存储简历文本供解析使用
-                st.session_state["_pending_resume_text"] = ui["resume_text"]
-
-                # 两阶段解析：按钮点击 → 设置标志 → 脚本重跑 → 执行解析 → 更新表单 → 自动重跑
-                if st.button(
-                    "🤖 智能解析填表",
-                    key="f_ai_parse",
-                    use_container_width=True,
-                    disabled=st.session_state.get("_resume_parsed", False),
-                    help="AI将自动识别简历中的姓名、学校、荣誉、特长等信息并填入下方表单"
-                ):
-                    st.session_state["_do_parse"] = True
-
-                # 第二阶段：执行解析（在本次run中执行，此时widget还未渲染value）
-                if st.session_state.get("_do_parse"):
-                    st.session_state["_do_parse"] = False
-                    with st.spinner("AI正在分析简历..."):
-                        rt = st.session_state.get("_pending_resume_text", "")
-                        parsed = parse_resume_with_ai(rt)
-                        if parsed:
-                            auto_fill_from_resume(parsed)
-                            st.session_state["_resume_parsed"] = True
-                            # 删除所有表单widget的缓存，强制使用新的value=
-                            for wk in ["f_name","f_gender","f_phone","f_ps","f_hh","f_ts1","f_ts2","f_ts3",
-                                        "f_hl","f_hd","f_comp","f_sl","f_sd","f_alvl","f_ad",
-                                        "f_al","f_twins","f_hh2","f_reloc","f_rt","f_extra",
-                                        "f_ptags","f_itags","f_pcustom","f_icustom"]:
-                                if wk in st.session_state:
-                                    del st.session_state[wk]
-                            st.rerun()
-                        else:
-                            st.session_state["_parse_error"] = "解析失败，请手动填写或换一份PDF/Word简历重试。"
-                            st.rerun()
-
-                if st.session_state.get("_parse_error"):
-                    st.error(st.session_state["_parse_error"])
-                    st.session_state["_parse_error"] = ""
+        # Step C: 显示状态
+        if st.session_state.get("_resume_parsed"):
+            st.success("✅ 表单已从简历自动填充！请向下滚动逐项检查，修改不准确处后点击「开始规划」。")
+            with st.expander("📋 查看简历原文", expanded=False):
+                if ui.get("resume_text"):
+                    st.text(ui["resume_text"][:1500])
+            if st.button("🔄 重新上传简历", key="f_reupload"):
+                st.session_state["_resume_parsed"] = False
+                st.session_state["_last_resume_key_v2"] = ""
+                ui["resume_text"] = ""
+                st.rerun()
+        elif ui.get("resume_text") and ui["resume_text"].startswith("[IMG]"):
+            st.warning("⚠️ 图片无法提取文字。请上传PDF或Word(.docx)版简历。")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
