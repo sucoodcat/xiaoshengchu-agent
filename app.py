@@ -255,6 +255,10 @@ if "_last_resume_key" not in st.session_state:
     st.session_state["_last_resume_key"] = ""
 if "_resume_parsed" not in st.session_state:
     st.session_state["_resume_parsed"] = False
+if "_parse_error" not in st.session_state:
+    st.session_state["_parse_error"] = ""
+if "_pending_resume_text" not in st.session_state:
+    st.session_state["_pending_resume_text"] = ""
 
 
 def parse_resume_with_ai(resume_text):
@@ -353,6 +357,7 @@ def reset_all():
     st.session_state.form_submitted = False
     st.session_state["_last_resume_key"] = ""
     st.session_state["_resume_parsed"] = False
+    st.session_state["_parse_error"] = ""
     st.rerun()
 
 
@@ -490,22 +495,33 @@ if not st.session_state.form_submitted:
                 with st.expander("📋 查看简历解析内容", expanded=False):
                     st.text(ui["resume_text"][:2000])
 
-                col_btn1, col_btn2 = st.columns([1, 2])
-                with col_btn1:
-                    if st.button("🤖 智能解析填表", key="f_ai_parse", use_container_width=True,
-                                 help="AI将自动识别简历中的姓名、学校、荣誉、特长等信息并填入下方表单"):
-                        with st.spinner("AI正在分析简历..."):
-                            parsed = parse_resume_with_ai(ui["resume_text"])
-                            if parsed:
-                                auto_fill_from_resume(parsed)
-                                st.session_state["_resume_parsed"] = True
-                                st.success("✅ 已自动填充表单！请检查并修改不准确的地方。")
-                                st.rerun()
-                            else:
-                                st.error("解析失败，请手动填写表单或检查简历文本可读性。")
-                with col_btn2:
-                    if st.session_state.get("_resume_parsed"):
-                        st.info("💡 表单已从简历自动填充。请逐项检查确认，修改不准确的内容后点击「开始规划」。")
+                # 显示解析状态
+                if st.session_state.get("_resume_parsed"):
+                    st.success("✅ 表单已自动填充！请逐项检查，修改不准确处后点击「开始规划」。")
+
+                # on_click回调：用session_state存储resume_text供回调使用
+                st.session_state["_pending_resume_text"] = ui["resume_text"]
+
+                def do_parse():
+                    rt = st.session_state.get("_pending_resume_text", "")
+                    parsed = parse_resume_with_ai(rt)
+                    if parsed:
+                        auto_fill_from_resume(parsed)
+                        st.session_state["_resume_parsed"] = True
+                    else:
+                        st.session_state["_parse_error"] = "解析失败，请手动填写或换一份PDF/Word简历重试。"
+
+                st.button(
+                    "🤖 智能解析填表",
+                    on_click=do_parse,
+                    key="f_ai_parse",
+                    use_container_width=True,
+                    disabled=st.session_state.get("_resume_parsed", False),
+                    help="AI将自动识别简历中的姓名、学校、荣誉、特长等信息并填入下方表单"
+                )
+                if st.session_state.get("_parse_error"):
+                    st.error(st.session_state["_parse_error"])
+                    st.session_state["_parse_error"] = ""
 
         st.markdown("</div>", unsafe_allow_html=True)
 
