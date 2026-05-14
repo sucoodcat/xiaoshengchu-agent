@@ -259,6 +259,8 @@ if "_parse_error" not in st.session_state:
     st.session_state["_parse_error"] = ""
 if "_pending_resume_text" not in st.session_state:
     st.session_state["_pending_resume_text"] = ""
+if "_do_parse" not in st.session_state:
+    st.session_state["_do_parse"] = False
 
 
 def parse_resume_with_ai(resume_text):
@@ -443,10 +445,10 @@ if not st.session_state.form_submitted:
     with st.container():
         st.markdown('<div class="form-card" style="border-left: 4px solid #f9ab00;">', unsafe_allow_html=True)
         st.markdown('<p class="form-section-title">📄 学生简历上传（推荐优先上传，可自动填表）</p>', unsafe_allow_html=True)
-        st.caption("支持 PDF、Word(.docx/.doc)、图片(.png/.jpg)。上传简历后点击「智能解析填表」，系统自动识别并填充下方所有信息。")
+        st.caption("支持 PDF、Word(.docx)、图片(.png/.jpg)。上传后点击「智能解析填表」自动填充下方信息。⚠️ 不支持旧版.doc格式，请转为.docx后上传。")
 
         uploaded_file = st.file_uploader(
-            "选择简历文件", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"],
+            "选择简历文件", type=["pdf", "docx", "png", "jpg", "jpeg"],
             key="f_resume",
             help="可拖拽文件或点击选择。手机端可从相册或文件管理中选择。"
         )
@@ -465,7 +467,7 @@ if not st.session_state.form_submitted:
                             if text:
                                 resume_text += text + "\n"
 
-                    elif file_type in ("docx", "doc"):
+                    elif file_type == "docx":
                         doc = Document(io.BytesIO(uploaded_file.getvalue()))
                         for para in doc.paragraphs:
                             if para.text.strip():
@@ -499,26 +501,40 @@ if not st.session_state.form_submitted:
                 if st.session_state.get("_resume_parsed"):
                     st.success("✅ 表单已自动填充！请逐项检查，修改不准确处后点击「开始规划」。")
 
-                # on_click回调：用session_state存储resume_text供回调使用
+                # 存储简历文本供解析使用
                 st.session_state["_pending_resume_text"] = ui["resume_text"]
 
-                def do_parse():
-                    rt = st.session_state.get("_pending_resume_text", "")
-                    parsed = parse_resume_with_ai(rt)
-                    if parsed:
-                        auto_fill_from_resume(parsed)
-                        st.session_state["_resume_parsed"] = True
-                    else:
-                        st.session_state["_parse_error"] = "解析失败，请手动填写或换一份PDF/Word简历重试。"
-
-                st.button(
+                # 两阶段解析：按钮点击 → 设置标志 → 脚本重跑 → 执行解析 → 更新表单 → 自动重跑
+                if st.button(
                     "🤖 智能解析填表",
-                    on_click=do_parse,
                     key="f_ai_parse",
                     use_container_width=True,
                     disabled=st.session_state.get("_resume_parsed", False),
                     help="AI将自动识别简历中的姓名、学校、荣誉、特长等信息并填入下方表单"
-                )
+                ):
+                    st.session_state["_do_parse"] = True
+
+                # 第二阶段：执行解析（在本次run中执行，此时widget还未渲染value）
+                if st.session_state.get("_do_parse"):
+                    st.session_state["_do_parse"] = False
+                    with st.spinner("AI正在分析简历..."):
+                        rt = st.session_state.get("_pending_resume_text", "")
+                        parsed = parse_resume_with_ai(rt)
+                        if parsed:
+                            auto_fill_from_resume(parsed)
+                            st.session_state["_resume_parsed"] = True
+                            # 删除所有表单widget的缓存，强制使用新的value=
+                            for wk in ["f_name","f_gender","f_phone","f_ps","f_hh","f_ts1","f_ts2","f_ts3",
+                                        "f_hl","f_hd","f_comp","f_sl","f_sd","f_alvl","f_ad",
+                                        "f_al","f_twins","f_hh2","f_reloc","f_rt","f_extra",
+                                        "f_ptags","f_itags","f_pcustom","f_icustom"]:
+                                if wk in st.session_state:
+                                    del st.session_state[wk]
+                            st.rerun()
+                        else:
+                            st.session_state["_parse_error"] = "解析失败，请手动填写或换一份PDF/Word简历重试。"
+                            st.rerun()
+
                 if st.session_state.get("_parse_error"):
                     st.error(st.session_state["_parse_error"])
                     st.session_state["_parse_error"] = ""
