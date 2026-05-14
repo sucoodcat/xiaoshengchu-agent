@@ -12,6 +12,8 @@ from docx import Document
 from PIL import Image
 import io
 import os
+import json
+import re
 
 # ── 环境加载 ──────────────────────────────────────────────
 load_dotenv(Path(__file__).parent / ".env")
@@ -247,20 +249,122 @@ if "user_info" not in st.session_state:
     st.session_state.user_info = dict(default_user_info)
 if "form_submitted" not in st.session_state:
     st.session_state.form_submitted = False
+if "is_generating" not in st.session_state:
+    st.session_state.is_generating = False
+if "_last_resume_key" not in st.session_state:
+    st.session_state["_last_resume_key"] = ""
+if "_resume_parsed" not in st.session_state:
+    st.session_state["_resume_parsed"] = False
+
+
+def parse_resume_with_ai(resume_text):
+    """调用DeepSeek从简历文本中提取结构化信息"""
+    if not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY == "sk-your-deepseek-key-here":
+        return None
+    try:
+        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+        prompt = f"""请从以下学生简历文本中提取信息，严格返回JSON格式（只返回JSON，不要其他文字）：
+
+{{
+  "child_name": "姓名",
+  "gender": "男或女",
+  "primary_school": "就读小学全称",
+  "academic_level": "优秀/良好/中等/未提及",
+  "honor_level": "省级/市级/区级/校级/无",
+  "honor_detail": "三好学生等荣誉具体描述",
+  "competition_detail": "学科竞赛获奖详情",
+  "sports_level": "国家级/省级/市级/校级/无",
+  "sports_detail": "体育特长项目与成绩",
+  "art_level": "国家级/省级/市级/校级/无",
+  "art_detail": "艺术特长项目与成绩",
+  "personality_tags": ["标签1","标签2"],
+  "interest_tags": ["兴趣1","兴趣2"],
+  "other_info": "其他值得注意的信息"
+}}
+
+简历文本：
+{resume_text[:3000]}"""
+        resp = client.chat.completions.create(
+            model=DEFAULT_MODEL, messages=[{"role":"user","content":prompt}],
+            max_tokens=1000, temperature=0.1
+        )
+        content = resp.choices[0].message.content.strip()
+        # 提取JSON部分
+        json_match = re.search(r'\{[\s\S]*\}', content)
+        if json_match:
+            return json.loads(json_match.group())
+        return None
+    except Exception:
+        return None
+
+
+def _fuzzy_match(target, options):
+    """在选项列表中模糊匹配最佳项"""
+    if not target:
+        return ""
+    for opt in options:
+        if opt and target in opt:
+            return opt
+    return ""
+
+
+def auto_fill_from_resume(parsed):
+    """将AI解析结果填入表单，自动匹配下拉框格式"""
+    ui = st.session_state.user_info
+    if parsed.get("child_name"):
+        ui["child_name"] = parsed["child_name"]
+    if parsed.get("gender") and parsed["gender"] in ["男", "女"]:
+        ui["gender"] = parsed["gender"]
+    if parsed.get("primary_school"):
+        matched = _fuzzy_match(parsed["primary_school"], ALL_PRIMARY)
+        ui["primary_school"] = matched if matched else parsed["primary_school"]
+    if parsed.get("academic_level"):
+        lv = parsed["academic_level"]
+        for opt in ["优秀（班级前10%）", "良好（班级前30%）", "中等", "待提升"]:
+            if lv in opt:
+                ui["academic_level"] = opt
+                break
+    if parsed.get("honor_level"):
+        ui["honor_level"] = parsed["honor_level"]
+    if parsed.get("honor_detail"):
+        ui["honor_detail"] = parsed["honor_detail"]
+    if parsed.get("competition_detail"):
+        ui["competition_detail"] = parsed["competition_detail"]
+    if parsed.get("sports_level"):
+        ui["sports_level"] = parsed["sports_level"]
+    if parsed.get("sports_detail"):
+        ui["sports_detail"] = parsed["sports_detail"]
+    if parsed.get("art_level"):
+        ui["art_level"] = parsed["art_level"]
+    if parsed.get("art_detail"):
+        ui["art_detail"] = parsed["art_detail"]
+    if parsed.get("personality_tags"):
+        ui["personality_tags"] = [t for t in parsed["personality_tags"] if t in STUDENT_PERSONALITY]
+    if parsed.get("interest_tags"):
+        ui["interest_tags"] = [t for t in parsed["interest_tags"] if t in STUDENT_INTERESTS]
+    if parsed.get("other_info"):
+        old = ui.get("extra_info", "")
+        ui["extra_info"] = (old + "\n[简历解析] " + parsed["other_info"]).strip()
 
 
 def reset_all():
     st.session_state.messages = []
     st.session_state.user_info = dict(default_user_info)
     st.session_state.form_submitted = False
+    st.session_state["_last_resume_key"] = ""
+    st.session_state["_resume_parsed"] = False
     st.rerun()
 
 
 def submit_form():
+    if st.session_state.is_generating:
+        st.warning("报告正在生成中，请耐心等待...")
+        st.stop()
     ui = st.session_state.user_info
     if not ui["primary_school"]:
         st.error("请至少填写「就读小学」。")
         st.stop()
+    st.session_state.is_generating = True
 
     # 根据阶段生成不同的初始请求
     phase = ui.get("phase", "")
@@ -329,6 +433,81 @@ if not st.session_state.form_submitted:
     </p>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── 简历上传（放在最上面，上传后可智能填表）──
+    with st.container():
+        st.markdown('<div class="form-card" style="border-left: 4px solid #f9ab00;">', unsafe_allow_html=True)
+        st.markdown('<p class="form-section-title">📄 学生简历上传（推荐优先上传，可自动填表）</p>', unsafe_allow_html=True)
+        st.caption("支持 PDF、Word(.docx/.doc)、图片(.png/.jpg)。上传简历后点击「智能解析填表」，系统自动识别并填充下方所有信息。")
+
+        uploaded_file = st.file_uploader(
+            "选择简历文件", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"],
+            key="f_resume",
+            help="可拖拽文件或点击选择。手机端可从相册或文件管理中选择。"
+        )
+        if uploaded_file is not None:
+            # 检查是否是新文件（避免重复解析）
+            file_key = f"{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.get("_last_resume_key") != file_key:
+                try:
+                    file_type = uploaded_file.name.split(".")[-1].lower()
+                    resume_text = ""
+
+                    if file_type == "pdf":
+                        pdf_reader = PdfReader(io.BytesIO(uploaded_file.getvalue()))
+                        for page in pdf_reader.pages:
+                            text = page.extract_text()
+                            if text:
+                                resume_text += text + "\n"
+
+                    elif file_type in ("docx", "doc"):
+                        doc = Document(io.BytesIO(uploaded_file.getvalue()))
+                        for para in doc.paragraphs:
+                            if para.text.strip():
+                                resume_text += para.text + "\n"
+                        for table in doc.tables:
+                            for row in table.rows:
+                                row_text = " | ".join(cell.text for cell in row.cells)
+                                if row_text.strip():
+                                    resume_text += row_text + "\n"
+
+                    elif file_type in ("png", "jpg", "jpeg"):
+                        resume_text = (
+                            "[图片简历已上传。图片格式无法自动提取文字，"
+                            "请手动填写下方表单或上传PDF/Word版本。]"
+                        )
+
+                    ui["resume_text"] = resume_text.strip()
+                    st.session_state["_last_resume_key"] = file_key
+
+                    if ui["resume_text"] and file_type not in ("png", "jpg", "jpeg"):
+                        st.success(f"✅ 文件解析成功，共提取约 {len(ui['resume_text'])} 字")
+                except Exception as e:
+                    st.warning(f"文件解析异常：{e}")
+
+            # 显示解析内容和智能填表按钮
+            if ui.get("resume_text") and "[图片" not in ui["resume_text"]:
+                with st.expander("📋 查看简历解析内容", expanded=False):
+                    st.text(ui["resume_text"][:2000])
+
+                col_btn1, col_btn2 = st.columns([1, 2])
+                with col_btn1:
+                    if st.button("🤖 智能解析填表", key="f_ai_parse", use_container_width=True,
+                                 help="AI将自动识别简历中的姓名、学校、荣誉、特长等信息并填入下方表单"):
+                        with st.spinner("AI正在分析简历..."):
+                            parsed = parse_resume_with_ai(ui["resume_text"])
+                            if parsed:
+                                auto_fill_from_resume(parsed)
+                                st.session_state["_resume_parsed"] = True
+                                st.success("✅ 已自动填充表单！请检查并修改不准确的地方。")
+                                st.rerun()
+                            else:
+                                st.error("解析失败，请手动填写表单或检查简历文本可读性。")
+                with col_btn2:
+                    if st.session_state.get("_resume_parsed"):
+                        st.info("💡 表单已从简历自动填充。请逐项检查确认，修改不准确的内容后点击「开始规划」。")
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ── 阶段选择 ──
     with st.container():
@@ -561,61 +740,6 @@ if not st.session_state.form_submitted:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- 简历上传 ---
-    with st.container():
-        st.markdown('<div class="form-card">', unsafe_allow_html=True)
-        st.markdown('<p class="form-section-title">📄 学生简历上传（选填）</p>', unsafe_allow_html=True)
-        st.caption("支持 PDF、Word(.docx)、图片(.png/.jpg)。简历中的信息将自动提取并用于分析。")
-
-        uploaded_file = st.file_uploader(
-            "选择文件", type=["pdf", "docx", "png", "jpg", "jpeg"], key="f_resume",
-        )
-        if uploaded_file is not None:
-            try:
-                file_type = uploaded_file.name.split(".")[-1].lower()
-                resume_text = ""
-
-                if file_type == "pdf":
-                    pdf_reader = PdfReader(io.BytesIO(uploaded_file.getvalue()))
-                    for page in pdf_reader.pages:
-                        text = page.extract_text()
-                        if text:
-                            resume_text += text + "\n"
-
-                elif file_type == "docx":
-                    doc = Document(io.BytesIO(uploaded_file.getvalue()))
-                    for para in doc.paragraphs:
-                        if para.text.strip():
-                            resume_text += para.text + "\n"
-                    # Also extract tables
-                    for table in doc.tables:
-                        for row in table.rows:
-                            row_text = " | ".join(cell.text for cell in row.cells)
-                            if row_text.strip():
-                                resume_text += row_text + "\n"
-
-                elif file_type in ("png", "jpg", "jpeg"):
-                    resume_text = (
-                        "[图片简历已上传。由于图片格式无法自动提取文字，"
-                        "请在下方「其他补充信息」中手动输入简历关键内容，"
-                        "或上传PDF/Word版本的简历。]"
-                    )
-
-                ui["resume_text"] = resume_text.strip()
-                if ui["resume_text"]:
-                    extracted_len = len(ui["resume_text"])
-                    if file_type in ("png", "jpg", "jpeg"):
-                        st.warning("⚠️ 图片格式无法自动提取文字，建议上传PDF或Word版本。")
-                    else:
-                        st.success(f"✅ 简历解析成功，共提取约 {extracted_len} 字")
-                    with st.expander("查看解析内容"):
-                        st.text(ui["resume_text"][:2000])
-            except Exception as e:
-                st.warning(f"简历解析异常：{e}。您可将简历内容粘贴到上方「其他补充信息」中。")
-                ui["resume_text"] = ""
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
     # --- 提交按钮 ---
     st.markdown('<div style="max-width:900px; margin:0 auto;">', unsafe_allow_html=True)
     st.button("🚀 开始规划", on_click=submit_form, use_container_width=True)
@@ -737,18 +861,34 @@ else:
                         message_placeholder.markdown(full_response)
 
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.session_state.is_generating = False
                 st.rerun()
 
     # ── 展示已有的对话历史 ──
     for msg in st.session_state.messages:
         role_label = "user" if msg["role"] == "user" else "assistant"
         with st.chat_message(role_label):
-            # 用户消息中剥离注入的上下文，只显示用户可见内容
             if msg["role"] == "user":
                 display = msg["content"].split("\n\n## 用户填写的信息")[0]
                 st.markdown(display)
             else:
                 st.markdown(msg["content"])
+
+    # ── 下载报告按钮 ──
+    if st.session_state.messages:
+        # 找到最新的assistant回复作为报告内容
+        report_text = ""
+        for msg in reversed(st.session_state.messages):
+            if msg["role"] == "assistant":
+                report_text = msg["content"]
+                break
+        if report_text:
+            st.download_button(
+                "📥 下载报告（文本格式）", data=report_text,
+                file_name="小升初路径规划报告.txt", mime="text/plain",
+                use_container_width=False
+            )
+            st.caption("💡 也可直接选中报告文字 → 复制 → 粘贴到微信或备忘录中保存")
 
     st.divider()
 
@@ -757,10 +897,14 @@ else:
     st.caption("输入「**对比**」比较志愿学校 · 输入「**分班考**」了解备考详情 · 或直接输入你的问题")
 
     if followup := st.chat_input("输入追问内容..."):
+        if st.session_state.is_generating:
+            st.warning("正在生成回复中，请稍候...")
+            st.stop()
         if not DEEPSEEK_API_KEY or DEEPSEEK_API_KEY == "sk-your-deepseek-key-here":
             st.error("❌ 服务器未配置有效的 DeepSeek API Key。请联系管理员。")
             st.stop()
 
+        st.session_state.is_generating = True
         st.session_state.messages.append({
             "role": "user",
             "content": f"{followup}\n\n{build_user_context()}"
