@@ -10,6 +10,7 @@ from datetime import datetime, date
 from PyPDF2 import PdfReader
 from docx import Document
 from PIL import Image
+from fpdf import FPDF
 import io
 import os
 import json
@@ -346,39 +347,17 @@ def _fuzzy_match(target, options):
 
 
 def _sync_widget_keys():
-    """将user_info的值同步到所有表单widget的session_state key"""
-    ui = st.session_state.user_info
-    # 所有表单widget的key映射
-    key_map = {
-        "f_name": ui.get("child_name", ""),
-        "f_gender": ui.get("gender", ""),
-        "f_phone": ui.get("phone", ""),
-        "f_ps": ui.get("primary_school", ""),
-        "f_hh": ui.get("household", ""),
-        "f_ts1": ui.get("target_school_1", ""),
-        "f_ts2": ui.get("target_school_2", ""),
-        "f_ts3": ui.get("target_school_3", ""),
-        "f_hl": ui.get("honor_level", "无"),
-        "f_hd": ui.get("honor_detail", ""),
-        "f_comp": ui.get("competition_detail", ""),
-        "f_sl": ui.get("sports_level", "无"),
-        "f_sd": ui.get("sports_detail", ""),
-        "f_alvl": ui.get("art_level", "无"),
-        "f_ad": ui.get("art_detail", ""),
-        "f_al": ui.get("academic_level", ""),
-        "f_twins": ui.get("is_twins", False),
-        "f_hh2": ui.get("household", ""),
-        "f_reloc": ui.get("relocation", ""),
-        "f_rt": ui.get("relocation_time", ""),
-        "f_extra": ui.get("extra_info", ""),
-        "f_pcustom": ui.get("personality_custom", ""),
-        "f_icustom": ui.get("interest_custom", ""),
-    }
-    for k, v in key_map.items():
-        st.session_state[k] = v
-    # multiselect 需要特殊处理（存储为列表）
-    st.session_state["f_ptags"] = list(ui.get("personality_tags", []))
-    st.session_state["f_itags"] = list(ui.get("interest_tags", []))
+    """清除所有表单widget缓存，强制widget从user_info重新读取value=参数"""
+    widget_keys = [
+        "f_name","f_gender","f_phone","f_ps","f_hh","f_ts1","f_ts2","f_ts3",
+        "f_hl","f_hd","f_comp","f_sl","f_sd","f_alvl","f_ad",
+        "f_al","f_twins","f_hh2","f_reloc","f_rt","f_extra",
+        "f_ptags","f_itags","f_pcustom","f_icustom",
+        "f_gr","f_rarea","f_rcomm","f_rdate","f_rhdate",
+        "f_phase",
+    ]
+    for k in widget_keys:
+        st.session_state.pop(k, None)
 
 
 def auto_fill_from_resume(parsed):
@@ -1031,27 +1010,20 @@ else:
         if report_text:
             c1, c2 = st.columns(2)
             with c1:
-                st.download_button(
-                    "📥 下载报告 .txt", data=report_text,
-                    file_name="小升初路径规划报告.txt", mime="text/plain",
-                    use_container_width=True
-                )
-            with c2:
-                # 生成docx
-                from docx import Document as DocxWriter
+                # DOCX
                 docx_io = io.BytesIO()
-                writer = DocxWriter()
-                writer.add_heading("小升初路径规划报告", 0)
+                docx_writer = Document()
+                docx_writer.add_heading("小升初路径规划报告", 0)
                 for line in report_text.split("\n"):
                     if line.startswith("# "):
-                        writer.add_heading(line[2:], 1)
+                        docx_writer.add_heading(line[2:], 1)
                     elif line.startswith("## "):
-                        writer.add_heading(line[3:], 2)
+                        docx_writer.add_heading(line[3:], 2)
                     elif line.startswith("### "):
-                        writer.add_heading(line[4:], 3)
+                        docx_writer.add_heading(line[4:], 3)
                     elif line.strip():
-                        writer.add_paragraph(line)
-                writer.save(docx_io)
+                        docx_writer.add_paragraph(line)
+                docx_writer.save(docx_io)
                 docx_io.seek(0)
                 st.download_button(
                     "📥 下载报告 .docx", data=docx_io,
@@ -1059,7 +1031,32 @@ else:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True
                 )
-            st.caption("💡 也可直接选中报告文字复制到微信或备忘录中保存。Word版可直接打印。")
+            with c2:
+                # PDF
+                pdf_io = io.BytesIO()
+                pdf = FPDF()
+                pdf.add_page()
+                # 使用内置字体（支持中文需要特殊处理）
+                try:
+                    pdf.add_font("CN", "", "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", uni=True)
+                    pdf.set_font("CN", size=10)
+                except:
+                    pdf.set_font("Helvetica", size=10)
+                for line in report_text.split("\n")[:200]:
+                    clean = line.replace("⚠️","").replace("☀️","").replace("🌧️","").replace("🔴","").replace("🟡","").replace("⏳","").replace("✅","").strip()
+                    if clean and not clean.startswith("|"):
+                        try:
+                            pdf.multi_cell(0, 6, clean[:120])
+                        except:
+                            pass
+                pdf.output(pdf_io)
+                pdf_io.seek(0)
+                st.download_button(
+                    "📥 下载报告 .pdf", data=pdf_io,
+                    file_name="小升初路径规划报告.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
     st.divider()
 
