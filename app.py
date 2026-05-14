@@ -154,28 +154,32 @@ def load_system_prompt():
 
 def get_timeline_context():
     today = date.today()
-    milestones = [
-        ("志愿填报截止", date(2026, 5, 31)),
-        ("电脑摇号公布", date(2026, 6, 23)),
-        ("补录窗口期", date(2026, 6, 24)),
-        ("公办录取公布", date(2026, 7, 3)),
-        ("分班考试季开始", date(2026, 7, 25)),
-        ("新生报到", date(2026, 8, 25)),
-        ("正式开学", date(2026, 9, 1)),
-    ]
-    lines = ["## 当前时间节点状态（基于今日日期自动计算）", ""]
-    for name, dt in milestones:
-        delta = (dt - today).days
+    lines = ["## 当前时间节点状态（基于今日日期自动计算。数据来源：昆明市义招网kmyzw.cn及市教体局官网jtj.km.gov.cn）", ""]
+    lines.append("| 关键节点 | 截止时间 | 剩余天数 | 状态 |")
+    lines.append("| :--- | :--- | :--- | :--- |")
+    for name, start_dt, end_dt in [
+        ("义招网报名", date(2026, 5, 6), date(2026, 5, 10)),
+        ("电脑摇号公布", date(2026, 6, 23), None),
+        ("补录窗口期", date(2026, 6, 24), None),
+        ("公办录取公布", date(2026, 7, 3), None),
+        ("分班考试季开始", date(2026, 7, 25), None),
+        ("新生报到", date(2026, 8, 25), None),
+        ("正式开学", date(2026, 9, 1), None),
+    ]:
+        ref_dt = end_dt or start_dt
+        delta = (ref_dt - today).days
+        deadline = ref_dt.strftime("%m月%d日")
         if delta < 0:
-            lines.append(f"- ✅ ~~{name}~~（已过去 {-delta} 天）")
+            lines.append(f"| {name} | {deadline} | 已过去{-delta}天 | ✅ 已完成 |")
         elif delta == 0:
-            lines.append(f"- 🔴 **{name}** — 就是今天！")
+            lines.append(f"| {name} | {deadline} | 今天！ | 🔴 就是今天 |")
         elif delta <= 7:
-            lines.append(f"- 🔴 **{name}** — 倒计时 **{delta} 天**")
+            lines.append(f"| {name} | {deadline} | {delta}天 | 🔴 紧急 |")
         elif delta <= 30:
-            lines.append(f"- 🟡 {name} — 还有 {delta} 天")
+            lines.append(f"| {name} | {deadline} | {delta}天 | 🟡 进行中 |")
         else:
-            lines.append(f"- ⏳ {name} — 还有 {delta} 天")
+            lines.append(f"| {name} | {deadline} | {delta}天 | ⏳ 待触发 |")
+    lines.append(f"\n数据校验：报名截止时间以昆明市义招网（www.kmyzw.cn）2026年4月29日公告「5月6日0时—5月10日24时」为准。")
     return "\n".join(lines)
 
 
@@ -192,6 +196,8 @@ def build_user_context():
     if ui.get('target_school_3'):
         ctx += f"- 第三志愿/备选：{ui['target_school_3']}\n"
     ctx += f"- 学业水平：{ui.get('academic_level') or '未提供'}\n"
+    if ui.get('grade_rank'):
+        ctx += f"- 年级排名：{ui['grade_rank']}\n"
     ctx += f"- 三好学生/荣誉级别：{ui.get('honor_level') or '无'}"
     if ui.get('honor_detail'):
         ctx += f"（{ui['honor_detail']}）"
@@ -215,8 +221,16 @@ def build_user_context():
     ctx += f"- 兴趣标签：{', '.join(i_tags) if i_tags else '未提供'}\n"
     ctx += f"- 户籍：{ui.get('household') or '未提供'}\n"
     ctx += f"- 双胞胎/多胞胎：{'是' if ui.get('is_twins') else '否'}\n"
-    ctx += f"- 家迁/搬迁计划：{ui.get('relocation') or '无'}\n"
-    ctx += f"- 家迁时间：{ui.get('relocation_time') or '未提供'}\n"
+    ctx += f"- 家迁状态：{ui.get('relocation_time') or '无'}\n"
+    if ui.get("_reloc_date"):
+        ctx += f"- 搬迁/审核完成时间：{ui['_reloc_date']}\n"
+    if ui.get("_reloc_hukou_date"):
+        ctx += f"- 户口迁移时间：{ui['_reloc_hukou_date']}\n"
+    if ui.get("_reloc_area"):
+        ctx += f"- 搬迁目标片区：{ui['_reloc_area']}\n"
+    if ui.get("_reloc_community"):
+        ctx += f"- 搬迁小区：{ui['_reloc_community']}\n"
+    ctx += f"- 家迁摘要：{ui.get('relocation') or '无'}\n"
     ctx += f"- 手机号：{ui.get('phone') or '未提供'}\n"
     ctx += f"- 其他补充：{ui.get('extra_info') or '未提供'}\n"
     if ui.get('resume_text'):
@@ -230,7 +244,7 @@ default_user_info = {
     "phase": PHASE_OPTIONS[0],
     "primary_school": "", "target_school_1": "",
     "target_school_2": "", "target_school_3": "",
-    "academic_level": "",
+    "academic_level": "", "grade_rank": "",
     "honor_level": "", "honor_detail": "",
     "competition_detail": "",
     "sports_level": "", "sports_detail": "",
@@ -239,6 +253,9 @@ default_user_info = {
     "interest_tags": [], "interest_custom": "",
     "household": "昆明主城区", "is_twins": False,
     "relocation": "", "relocation_time": "",
+    "_reloc_date": "", "_reloc_hukou_date": "",
+    "_reloc_area": "", "_reloc_community": "",
+    "grade_rank": "",
     "phone": "", "extra_info": "",
     "resume_text": "",
 }
@@ -298,6 +315,24 @@ def parse_resume_with_ai(resume_text):
         return None
     except Exception:
         return None
+
+
+def _build_relocation_text(ui):
+    """将结构化家迁字段组合为可读文本"""
+    rt = ui.get("relocation_time", "")
+    if not rt or rt == "暂无搬迁":
+        return ""
+    parts = []
+    if ui.get("_reloc_date"):
+        parts.append(f"于{ui['_reloc_date']}")
+    parts.append(f"{rt}")
+    if ui.get("_reloc_area"):
+        parts.append(f"迁至{ui['_reloc_area']}")
+    if ui.get("_reloc_community"):
+        parts.append(f"{ui['_reloc_community']}")
+    if ui.get("_reloc_hukou_date"):
+        parts.append(f"（户口于{ui['_reloc_hukou_date']}迁至对应辖区派出所）")
+    return "，".join(parts) if parts else ""
 
 
 def _fuzzy_match(target, options):
@@ -506,14 +541,19 @@ if not st.session_state.form_submitted:
                             if t: resume_text += t + "\n"
 
                     elif file_type == "docx":
-                        doc = Document(io.BytesIO(file_bytes))
-                        for para in doc.paragraphs:
-                            if para.text.strip():
-                                resume_text += para.text + "\n"
-                        for table in doc.tables:
-                            for row in table.rows:
-                                rt = " | ".join(c.text for c in row.cells)
-                                if rt.strip(): resume_text += rt + "\n"
+                        try:
+                            doc = Document(io.BytesIO(file_bytes))
+                            for para in doc.paragraphs:
+                                if para.text.strip():
+                                    resume_text += para.text + "\n"
+                            for table in doc.tables:
+                                for row in table.rows:
+                                    rt = " | ".join(c.text for c in row.cells)
+                                    if rt.strip(): resume_text += rt + "\n"
+                            if not resume_text.strip():
+                                st.warning("⚠️ 文档解析为空，请确认是标准.docx格式（非旧版.doc或WPS特殊格式）。建议用Word打开后另存为.docx再上传。")
+                        except Exception as docx_err:
+                            st.warning(f"⚠️ Word解析失败：{docx_err}。请转存为PDF格式后上传。")
 
                     elif file_type in ("png", "jpg", "jpeg"):
                         resume_text = "[IMG]"
@@ -710,19 +750,27 @@ if not st.session_state.form_submitted:
 
         # --- 第4行：学业与家庭情况 ---
         st.markdown('<p class="form-section-title">🌱 学业与家庭情况</p>', unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
             ui["academic_level"] = st.selectbox(
-                "学业水平自评",
-                ["", "优秀（班级前10%）", "良好（班级前30%）", "中等", "待提升"],
+                "学业水平自评（班级）",
+                ["", "优秀（班级前10%）", "良好（班级前20%）", "良好（班级前30%）", "中等", "待提升"],
                 index=0 if not ui["academic_level"]
-                      else ["", "优秀（班级前10%）", "良好（班级前30%）", "中等", "待提升"].index(ui["academic_level"])
-                      if ui["academic_level"] in ["", "优秀（班级前10%）", "良好（班级前30%）", "中等", "待提升"] else 0,
+                      else ["", "优秀（班级前10%）", "良好（班级前20%）", "良好（班级前30%）", "中等", "待提升"].index(ui["academic_level"])
+                      if ui["academic_level"] in ["", "优秀（班级前10%）", "良好（班级前20%）", "良好（班级前30%）", "中等", "待提升"] else 0,
                 key="f_al"
             )
         with c2:
+            ui["grade_rank"] = st.text_input(
+                "年级排名（选填）", value=ui.get("grade_rank", ""),
+                placeholder="如：年级前15名 / 年级前10%",
+                key="f_gr"
+            )
+
+        c1, c2 = st.columns(2)
+        with c1:
             ui["is_twins"] = st.checkbox("双胞胎/多胞胎", value=ui["is_twins"], key="f_twins")
-        with c3:
+        with c2:
             ui["household"] = st.selectbox(
                 "户籍类型", ["昆明主城区", "昆明郊县", "云南省内其他", "外省"],
                 index=["昆明主城区", "昆明郊县", "云南省内其他", "外省"].index(ui["household"])
@@ -730,22 +778,47 @@ if not st.session_state.form_submitted:
                 key="f_hh2"
             )
 
-        # 家迁
-        c1, c2 = st.columns([2, 1])
+        # 家迁 - 结构化表单
+        st.markdown("**家迁/搬迁信息**")
+        c1, c2, c3 = st.columns(3)
         with c1:
-            ui["relocation"] = st.text_area(
-                "家迁/搬迁计划", value=ui["relocation"],
-                placeholder="如：已搬到呈贡区XX小区 / 计划7月前迁到盘龙区 / 工作调动可能离开昆明",
-                height=60, key="f_reloc"
-            )
-        with c2:
             ui["relocation_time"] = st.selectbox(
-                "搬迁时间节点",
-                ["暂无搬迁", "已搬迁", "1个月内", "3个月内", "半年内", "计划中/时间未定"],
-                index=["暂无搬迁", "已搬迁", "1个月内", "3个月内", "半年内", "计划中/时间未定"].index(ui["relocation_time"])
-                if ui["relocation_time"] in ["暂无搬迁", "已搬迁", "1个月内", "3个月内", "半年内", "计划中/时间未定"] else 0,
+                "搬迁状态",
+                ["暂无搬迁", "已完成搬迁", "计划1个月内", "计划3个月内", "计划中"],
+                index=["暂无搬迁", "已完成搬迁", "计划1个月内", "计划3个月内", "计划中"].index(ui["relocation_time"])
+                if ui["relocation_time"] in ["暂无搬迁", "已完成搬迁", "计划1个月内", "计划3个月内", "计划中"] else 0,
                 key="f_rt"
             )
+        with c2:
+            # 搬迁时间输入
+            ui["_reloc_date"] = st.text_input(
+                "完成搬迁/审核时间（选填）",
+                value=ui.get("_reloc_date", ""),
+                placeholder="如：2026年3月",
+                key="f_rdate"
+            )
+        with c3:
+            ui["_reloc_hukou_date"] = st.text_input(
+                "户口迁移时间（选填）",
+                value=ui.get("_reloc_hukou_date", ""),
+                placeholder="如：2025年8月",
+                key="f_rhdate"
+            )
+        c1, c2 = st.columns(2)
+        with c1:
+            ui["_reloc_area"] = st.text_input(
+                "搬迁至哪个片区", value=ui.get("_reloc_area", ""),
+                placeholder="如：巫家坝片区 / 呈贡区",
+                key="f_rarea"
+            )
+        with c2:
+            ui["_reloc_community"] = st.text_input(
+                "小区名称（选填）", value=ui.get("_reloc_community", ""),
+                placeholder="如：万科翡翠",
+                key="f_rcomm"
+            )
+        # 组合家迁信息
+        ui["relocation"] = _build_relocation_text(ui)
 
         ui["extra_info"] = st.text_area(
             "其他补充信息", value=ui["extra_info"],
@@ -785,6 +858,37 @@ if not st.session_state.form_submitted:
 
     # --- 提交按钮 ---
     st.markdown('<div style="max-width:900px; margin:0 auto;">', unsafe_allow_html=True)
+
+    # 学生信息保存/导入
+    with st.expander("💾 保存/导入已填写信息", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            # 导出为JSON
+            export_data = {k: v for k, v in ui.items()
+                          if not k.startswith("_") and k != "resume_text"}
+            st.download_button(
+                "📤 导出学生信息 (.json)",
+                data=json.dumps(export_data, ensure_ascii=False, indent=2),
+                file_name=f"学生信息_{ui.get('child_name','未命名')}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+        with c2:
+            import_file = st.file_uploader(
+                "📥 导入之前保存的信息", type=["json"],
+                key="f_import", label_visibility="collapsed"
+            )
+            if import_file is not None:
+                try:
+                    imported = json.loads(import_file.getvalue())
+                    for k, v in imported.items():
+                        if k in ui and not k.startswith("_"):
+                            ui[k] = v
+                    st.success("✅ 信息已导入！请检查并更新后提交。")
+                    st.rerun()
+                except:
+                    st.error("导入失败，请确认文件格式正确。")
+
     st.button("🚀 开始规划", on_click=submit_form, use_container_width=True)
 
     # 时间线速览
@@ -793,7 +897,7 @@ if not st.session_state.form_submitted:
     st.caption(
         f"📅 今日：{today.strftime('%Y年%m月%d日')} ｜ "
         f"⏳ 距离摇号公布还有 {days_left} 天 ｜ "
-        f"🔴 志愿填报截止还有 {(date(2026, 5, 31) - today).days} 天"
+        f"数据源：昆明市义招网（kmyzw.cn）及教体局官网"
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -919,19 +1023,43 @@ else:
 
     # ── 下载报告按钮 ──
     if st.session_state.messages:
-        # 找到最新的assistant回复作为报告内容
         report_text = ""
         for msg in reversed(st.session_state.messages):
             if msg["role"] == "assistant":
                 report_text = msg["content"]
                 break
         if report_text:
-            st.download_button(
-                "📥 下载报告（文本格式）", data=report_text,
-                file_name="小升初路径规划报告.txt", mime="text/plain",
-                use_container_width=False
-            )
-            st.caption("💡 也可直接选中报告文字 → 复制 → 粘贴到微信或备忘录中保存")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button(
+                    "📥 下载报告 .txt", data=report_text,
+                    file_name="小升初路径规划报告.txt", mime="text/plain",
+                    use_container_width=True
+                )
+            with c2:
+                # 生成docx
+                from docx import Document as DocxWriter
+                docx_io = io.BytesIO()
+                writer = DocxWriter()
+                writer.add_heading("小升初路径规划报告", 0)
+                for line in report_text.split("\n"):
+                    if line.startswith("# "):
+                        writer.add_heading(line[2:], 1)
+                    elif line.startswith("## "):
+                        writer.add_heading(line[3:], 2)
+                    elif line.startswith("### "):
+                        writer.add_heading(line[4:], 3)
+                    elif line.strip():
+                        writer.add_paragraph(line)
+                writer.save(docx_io)
+                docx_io.seek(0)
+                st.download_button(
+                    "📥 下载报告 .docx", data=docx_io,
+                    file_name="小升初路径规划报告.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
+            st.caption("💡 也可直接选中报告文字复制到微信或备忘录中保存。Word版可直接打印。")
 
     st.divider()
 
